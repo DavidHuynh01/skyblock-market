@@ -14,10 +14,12 @@ run that saved nothing at all is an error.
 """
 from collector.feed import FeedError, fetch_with_retry, parse_batch
 
-# The run gives up 38 s after starting. A fetch can take up to 10 s, so even
-# one started just before the deadline ends inside the 50 s Lambda timeout,
-# and runs never overlap.
-RUN_SECONDS = 38
+# The run stops starting new work 30 s in. Hypixel's list is normally visible
+# by about 12 s, so this is plenty. A fetch can still take ~10 s after that and
+# a save a few more, all inside the 55 s Lambda limit, so runs never overlap.
+# If something hangs longer, the worst case is a Lambda timeout, which loses
+# nothing: the next run saves any batch this one missed.
+RUN_SECONDS = 30
 POLL_SECONDS = 2
 
 

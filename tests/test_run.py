@@ -1,7 +1,7 @@
 import pytest
 
 from collector.feed import FeedError
-from collector.run import collect_once
+from collector.run import RUN_SECONDS, collect_once
 from tests.helpers import CUR, M, PREV, Clock, body, sale
 
 
@@ -77,7 +77,7 @@ def test_it_gives_up_at_the_deadline_if_hypixel_never_refreshes():
     with pytest.raises(FeedError, match="did not refresh"):
         collect_once(get_json=feed(clock, refresh_at=M + 999), save=lambda b: "k",
                      clock=clock, sleep=clock.sleep, state={"last_saved": PREV})
-    assert clock.t <= M + 0.5 + 38
+    assert clock.t <= M + 0.5 + RUN_SECONDS
 
 
 def test_a_broken_feed_saves_nothing():
@@ -111,3 +111,19 @@ def test_when_hypixel_refreshes_after_every_deadline_each_batch_is_still_saved_o
                       get_json=lambda: body([sale()], last_updated=PREV))
     assert saved == [PREV]
     assert keys == [f"key-{PREV}"]
+
+
+def test_even_with_slow_fetches_a_run_ends_with_room_to_spare():
+    # Every fetch takes the full 10 s timeout and Hypixel never refreshes. The
+    # run must stop early enough that saving still fits inside the 55 s
+    # Lambda limit, and long before the next run starts.
+    clock = Clock(M + 0.5)
+
+    def slow_feed():
+        clock.t += 10
+        return body([sale()], last_updated=PREV)
+
+    with pytest.raises(FeedError):
+        collect_once(get_json=slow_feed, save=lambda b: "k", clock=clock,
+                     sleep=clock.sleep, state={"last_saved": PREV})
+    assert clock.t - (M + 0.5) <= 40
