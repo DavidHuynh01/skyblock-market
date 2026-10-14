@@ -9,8 +9,10 @@ from datetime import datetime, timezone
 
 
 def object_key(last_updated_ms):
+    # To the second, so two lists stamped in the same minute never share a name.
+    # (Files saved before this change are named to the minute.)
     t = datetime.fromtimestamp(last_updated_ms / 1000, tz=timezone.utc)
-    return f"raw/date={t:%Y-%m-%d}/hour={t:%H}/{t:%Y%m%dT%H%MZ}.jsonl.gz"
+    return f"raw/date={t:%Y-%m-%d}/hour={t:%H}/{t:%Y%m%dT%H%M%SZ}.jsonl.gz"
 
 
 def encode(sales):
