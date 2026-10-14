@@ -24,3 +24,15 @@ def test_first_day_counts_from_the_first_file_and_today_counts_up_to_now():
 
 def test_no_files_means_no_rows():
     assert coverage([], datetime(2026, 10, 13, tzinfo=UTC)) == []
+
+
+def test_files_it_does_not_recognise_are_skipped():
+    k = key(datetime(2026, 10, 12, 4, 34, tzinfo=UTC))
+    now = datetime(2026, 10, 12, 4, 35, tzinfo=UTC)
+    assert coverage(["raw/README.txt", "raw/date=2026-10-12/notes.json", k], now) == [("2026-10-12", 1, 1)]
+
+
+def test_names_with_seconds_count_toward_their_minute():
+    assert minute_of("raw/date=2026-10-12/hour=04/20261012T043406Z.jsonl.gz") == datetime(
+        2026, 10, 12, 4, 34, tzinfo=UTC
+    )

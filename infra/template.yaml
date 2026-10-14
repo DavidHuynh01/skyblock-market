@@ -55,8 +55,8 @@ Resources:
       Handler: collector.handler.lambda_handler
       Runtime: python3.13
       Architectures: [arm64]
-      MemorySize: 128
-      Timeout: 50
+      MemorySize: 192
+      Timeout: 55
       # Caps this role at the boundary defined in github-oidc.yaml. The deploy
       # role can only create roles that carry it.
       PermissionsBoundary: !Sub "arn:aws:iam::${AWS::AccountId}:policy/${AWS::StackName}-role-boundary"
@@ -142,6 +142,50 @@ Resources:
       ComparisonOperator: LessThanThreshold
       # No data at all means no runs at all: that's the case this alarm is for.
       TreatMissingData: breaching
+      AlarmActions: [!Ref AlertTopic]
+      OKActions: [!Ref AlertTopic]
+
+  # One dropped trigger loses nothing, because the next run saves that batch.
+  # Two in a row can lose a minute without any error being recorded.
+  DroppedAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: !Sub "${AWS::StackName}-dropped"
+      AlarmDescription: Collector runs were dropped before starting (2 or more in 10 minutes).
+      Namespace: AWS/Lambda
+      MetricName: AsyncEventsDropped
+      Dimensions:
+        - Name: FunctionName
+          Value: !Ref CollectorFunction
+      Statistic: Sum
+      Period: 600
+      EvaluationPeriods: 1
+      Threshold: 2
+      ComparisonOperator: GreaterThanOrEqualToThreshold
+      TreatMissingData: notBreaching
+      AlarmActions: [!Ref AlertTopic]
+      OKActions: [!Ref AlertTopic]
+
+  # Normal is ~2,400 sales per 30 minutes. If Hypixel's feed goes quiet, runs
+  # still succeed and write (empty) files, so only this alarm would notice.
+  # SalesSaved is logged by the function in embedded-metric format.
+  QuietAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: !Sub "${AWS::StackName}-quiet"
+      AlarmDescription: Fewer than 100 sales saved in 30 minutes; Hypixel's feed may have gone quiet.
+      Namespace: skyblock-market
+      MetricName: SalesSaved
+      Dimensions:
+        - Name: Service
+          Value: collector
+      Statistic: Sum
+      Period: 1800
+      EvaluationPeriods: 1
+      Threshold: 100
+      ComparisonOperator: LessThanThreshold
+      # A collector that has stopped entirely is the silent alarm's job.
+      TreatMissingData: notBreaching
       AlarmActions: [!Ref AlertTopic]
       OKActions: [!Ref AlertTopic]
 

@@ -41,9 +41,21 @@ def test_a_few_malformed_sales_are_dropped_and_counted():
 
 
 def test_too_many_malformed_sales_reject_the_batch():
-    sales = [sale() for _ in range(8)] + [sale(price=-1), sale(bin="yes")]
+    sales = [sale() for _ in range(10)] + [sale(price=-1), sale(bin="yes"), sale(item_bytes="")]
     with pytest.raises(FeedError, match="format may have changed"):
         parse_batch(body(sales))
+
+
+def test_one_bad_sale_does_not_sink_a_small_batch():
+    # 1 of 9 is over 10%, but a single odd sale isn't a format change; it takes
+    # at least 3 bad sales as well as more than 10% to reject a batch.
+    batch = parse_batch(body([sale() for _ in range(8)] + [sale(price=-1)]))
+    assert len(batch.sales) == 8 and batch.dropped == 1
+
+
+def test_two_bad_sales_are_dropped_even_at_twenty_percent():
+    batch = parse_batch(body([sale() for _ in range(8)] + [sale(price=-1), sale(bin="yes")]))
+    assert len(batch.sales) == 8 and batch.dropped == 2
 
 
 @pytest.mark.parametrize("bad", [

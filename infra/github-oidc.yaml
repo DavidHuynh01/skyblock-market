@@ -106,25 +106,15 @@ Resources:
                 Effect: Allow
                 Action: cloudformation:CreateChangeSet
                 Resource: !Sub "arn:aws:cloudformation:${AWS::Region}:aws:transform/Serverless-2016-10-31"
-              - Sid: BucketsConfigOnly
+              # Finding SAM's artifact bucket for the code upload. No bucket
+              # settings at all: changing a bucket's policy or public access
+              # (rare) goes through a deploy with admin credentials instead.
+              - Sid: ArtifactBucket
                 Effect: Allow
                 Action:
-                  - s3:CreateBucket
                   - s3:GetBucketLocation
                   - s3:ListBucket
-                  - s3:GetBucketPolicy
-                  - s3:PutBucketPolicy
-                  - s3:DeleteBucketPolicy
-                  - s3:PutBucketTagging
-                  - s3:GetEncryptionConfiguration
-                  - s3:PutEncryptionConfiguration
-                  - s3:GetBucketPublicAccessBlock
-                  - s3:PutBucketPublicAccessBlock
-                  - s3:GetBucketOwnershipControls
-                  - s3:PutBucketOwnershipControls
-                Resource:
-                  - arn:aws:s3:::aws-sam-cli-managed-default*
-                  - !Sub "arn:aws:s3:::${StackName}-*"
+                Resource: arn:aws:s3:::aws-sam-cli-managed-default*
               # The code upload only. The deploy role can't read or write the
               # collected sales.
               - Sid: SamArtifacts
