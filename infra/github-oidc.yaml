@@ -23,6 +23,34 @@ Parameters:
     Description: The collector stack this role may deploy
 
 Resources:
+  # The most any role the collector stack creates can ever do: add sales under
+  # raw/, write its own logs, and let the scheduler start the function. The
+  # deploy role can't create or widen a role without this attached, and has
+  # no permission to edit this policy.
+  RoleBoundary:
+    Type: AWS::IAM::ManagedPolicy
+    Properties:
+      ManagedPolicyName: !Sub "${StackName}-role-boundary"
+      Description: Permissions boundary for every role in the skyblock-market stack
+      PolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Sid: SaveSales
+            Effect: Allow
+            Action: s3:PutObject
+            Resource: !Sub "arn:aws:s3:::${StackName}-*/raw/*"
+          - Sid: WriteOwnLogs
+            Effect: Allow
+            Action:
+              - logs:CreateLogGroup
+              - logs:CreateLogStream
+              - logs:PutLogEvents
+            Resource: !Sub "arn:aws:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/lambda/${StackName}-*"
+          - Sid: StartTheCollector
+            Effect: Allow
+            Action: lambda:InvokeFunction
+            Resource: !Sub "arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:${StackName}-*"
+
   DeployRole:
     Type: AWS::IAM::Role
     Properties:
@@ -107,24 +135,44 @@ Resources:
                 Effect: Allow
                 Action: lambda:*
                 Resource: !Sub "arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:${StackName}-*"
-              - Sid: StackRoles
+              # Roles can only be created or given permissions with the boundary
+              # attached, so no role this pipeline makes can ever exceed it.
+              # Without this, it could create a role, attach AdministratorAccess
+              # and run a function as that role: full control of the account.
+              - Sid: StackRolesInsideBoundary
                 Effect: Allow
                 Action:
                   - iam:CreateRole
+                  - iam:PutRolePolicy
+                  - iam:AttachRolePolicy
+                  - iam:DetachRolePolicy
+                  - iam:DeleteRolePolicy
+                  - iam:PutRolePermissionsBoundary
+                Resource: !Sub "arn:aws:iam::${AWS::AccountId}:role/${StackName}-*"
+                Condition:
+                  StringEquals:
+                    iam:PermissionsBoundary: !Ref RoleBoundary
+              - Sid: StackRolesHousekeeping
+                Effect: Allow
+                Action:
                   - iam:DeleteRole
                   - iam:GetRole
-                  - iam:PassRole
                   - iam:TagRole
                   - iam:UntagRole
                   - iam:UpdateAssumeRolePolicy
-                  - iam:AttachRolePolicy
-                  - iam:DetachRolePolicy
-                  - iam:PutRolePolicy
-                  - iam:DeleteRolePolicy
                   - iam:GetRolePolicy
                   - iam:ListRolePolicies
                   - iam:ListAttachedRolePolicies
                 Resource: !Sub "arn:aws:iam::${AWS::AccountId}:role/${StackName}-*"
+              - Sid: PassStackRolesToTheirServices
+                Effect: Allow
+                Action: iam:PassRole
+                Resource: !Sub "arn:aws:iam::${AWS::AccountId}:role/${StackName}-*"
+                Condition:
+                  StringEquals:
+                    iam:PassedToService:
+                      - lambda.amazonaws.com
+                      - scheduler.amazonaws.com
               - Sid: Schedule
                 Effect: Allow
                 Action:

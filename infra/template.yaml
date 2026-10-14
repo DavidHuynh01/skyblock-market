@@ -57,6 +57,9 @@ Resources:
       Architectures: [arm64]
       MemorySize: 128
       Timeout: 50
+      # Caps this role at the boundary defined in github-oidc.yaml. The deploy
+      # role can only create roles that carry it.
+      PermissionsBoundary: !Sub "arn:aws:iam::${AWS::AccountId}:policy/${AWS::StackName}-role-boundary"
       Environment:
         Variables:
           BUCKET: !Ref RawBucket
@@ -82,6 +85,7 @@ Resources:
           Type: ScheduleV2
           Properties:
             Name: !Sub "${AWS::StackName}-every-minute"
+            PermissionsBoundary: !Sub "arn:aws:iam::${AWS::AccountId}:policy/${AWS::StackName}-role-boundary"
             ScheduleExpression: rate(1 minute)
             FlexibleTimeWindow:
               Mode: "OFF"
