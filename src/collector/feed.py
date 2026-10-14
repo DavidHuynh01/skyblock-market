@@ -17,9 +17,11 @@ FETCH_TIMEOUT_SECONDS = 10
 # and any field Hypixel adds in future, which might be personal too.
 KEEP = ("auction_id", "timestamp", "price", "bin", "item_bytes")
 
-# Above this share of malformed sales, assume Hypixel changed its format and
-# save nothing rather than a batch we can't trust.
+# Above this share of malformed sales, and at least this many, assume Hypixel
+# changed its format and save nothing rather than a batch we can't trust. The
+# floor stops one odd sale from sinking a small batch.
 MAX_BAD_SHARE = 0.10
+MIN_BAD_TO_REJECT = 3
 
 _AUCTION_ID = re.compile(r"[0-9a-f]{32}")
 
@@ -60,7 +62,7 @@ def parse_batch(body):
         raise FeedError("feed response is missing auctions or lastUpdated")
     kept = [{field: sale[field] for field in KEEP} for sale in sales if _is_valid_sale(sale)]
     dropped = len(sales) - len(kept)
-    if sales and dropped / len(sales) > MAX_BAD_SHARE:
+    if dropped >= MIN_BAD_TO_REJECT and dropped / len(sales) > MAX_BAD_SHARE:
         raise FeedError(f"{dropped} of {len(sales)} sales malformed; the format may have changed")
     return Batch(last_updated, kept, dropped)
 
