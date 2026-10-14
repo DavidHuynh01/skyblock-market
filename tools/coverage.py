@@ -10,17 +10,22 @@ import re
 import sys
 from datetime import datetime, time, timedelta, timezone
 
-_STAMP = re.compile(r"(\d{8}T\d{4}Z)\.jsonl\.gz$")
+# Files are named by Hypixel's refresh time: to the minute in early files
+# (20261014T0125Z), to the second since (20261014T012506Z).
+_STAMP = re.compile(r"(\d{8}T\d{4})(\d{2})?Z\.jsonl\.gz$")
 
 
 def minute_of(key):
-    stamp = _STAMP.search(key).group(1)
-    return datetime.strptime(stamp, "%Y%m%dT%H%MZ").replace(tzinfo=timezone.utc)
+    """The UTC minute a file holds, or None for anything that isn't a batch file."""
+    match = _STAMP.search(key)
+    if not match:
+        return None
+    return datetime.strptime(match.group(1), "%Y%m%dT%H%M").replace(tzinfo=timezone.utc)
 
 
 def coverage(keys, now):
     """[(date, minutes_captured, minutes_expected)], from the first file's day to now's."""
-    minutes = sorted({minute_of(k) for k in keys})
+    minutes = sorted({m for m in map(minute_of, keys) if m is not None})
     if not minutes:
         return []
     first, now_minute = minutes[0], now.replace(second=0, microsecond=0)
