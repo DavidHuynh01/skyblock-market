@@ -1,0 +1,150 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Transform: AWS::Serverless-2016-10-31
+Description: >
+  skyblock-market collector. Saves every finished Hypixel SkyBlock auction to
+  S3 once a minute, without buyer or seller ids, and emails if it fails or stops.
+
+Parameters:
+  AlertEmail:
+    Type: String
+    NoEcho: true
+    Description: Where alerts are emailed. Supplied by CI from a secret; never stored in the repo.
+
+Resources:
+  RawBucket:
+    Type: AWS::S3::Bucket
+    # Collected sales can't be re-collected: deleting the stack must never delete them.
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: AES256
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+      OwnershipControls:
+        Rules:
+          - ObjectOwnership: BucketOwnerEnforced
+
+  RawBucketPolicy:
+    Type: AWS::S3::BucketPolicy
+    Properties:
+      Bucket: !Ref RawBucket
+      PolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Sid: DenyInsecureTransport
+            Effect: Deny
+            Principal: "*"
+            Action: "s3:*"
+            Resource:
+              - !GetAtt RawBucket.Arn
+              - !Sub "${RawBucket.Arn}/*"
+            Condition:
+              Bool:
+                aws:SecureTransport: "false"
+
+  CollectorFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: ../src/
+      Handler: collector.handler.lambda_handler
+      Runtime: python3.13
+      Architectures: [arm64]
+      MemorySize: 128
+      Timeout: 50
+      Environment:
+        Variables:
+          BUCKET: !Ref RawBucket
+      # A named log group, created before the function exists. With Lambda's
+      # default group, the first run (within a minute of deploy) can create
+      # the group before CloudFormation does, and the deploy then fails.
+      LoggingConfig:
+        LogGroup: !Ref CollectorLogs
+      # A retry would fire after Hypixel has moved on, so it could never
+      # recover a minute; runs retry the fetch themselves instead.
+      EventInvokeConfig:
+        MaximumRetryAttempts: 0
+        MaximumEventAgeInSeconds: 60
+      Policies:
+        # Write new files only: no read, list or delete, so a bug can't touch
+        # data already collected.
+        - Statement:
+            - Effect: Allow
+              Action: s3:PutObject
+              Resource: !Sub "${RawBucket.Arn}/raw/*"
+      Events:
+        EveryMinute:
+          Type: ScheduleV2
+          Properties:
+            Name: !Sub "${AWS::StackName}-every-minute"
+            ScheduleExpression: rate(1 minute)
+            FlexibleTimeWindow:
+              Mode: "OFF"
+            RetryPolicy:
+              MaximumRetryAttempts: 0
+
+  CollectorLogs:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub "/aws/lambda/${AWS::StackName}-collector"
+      RetentionInDays: 30
+
+  AlertTopic:
+    Type: AWS::SNS::Topic
+    Properties:
+      Subscription:
+        - Protocol: email
+          Endpoint: !Ref AlertEmail
+
+  FailingAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: !Sub "${AWS::StackName}-failing"
+      AlarmDescription: Collector runs are failing (5 or more errors in 15 minutes).
+      Namespace: AWS/Lambda
+      MetricName: Errors
+      Dimensions:
+        - Name: FunctionName
+          Value: !Ref CollectorFunction
+      Statistic: Sum
+      Period: 900
+      EvaluationPeriods: 1
+      Threshold: 5
+      ComparisonOperator: GreaterThanOrEqualToThreshold
+      TreatMissingData: notBreaching
+      AlarmActions: [!Ref AlertTopic]
+      OKActions: [!Ref AlertTopic]
+
+  SilentAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: !Sub "${AWS::StackName}-silent"
+      AlarmDescription: Collector has stopped running (under 3 runs in each of three 5-minute periods).
+      Namespace: AWS/Lambda
+      MetricName: Invocations
+      Dimensions:
+        - Name: FunctionName
+          Value: !Ref CollectorFunction
+      Statistic: Sum
+      Period: 300
+      EvaluationPeriods: 3
+      DatapointsToAlarm: 3
+      Threshold: 3
+      ComparisonOperator: LessThanThreshold
+      # No data at all means no runs at all: that's the case this alarm is for.
+      TreatMissingData: breaching
+      AlarmActions: [!Ref AlertTopic]
+      OKActions: [!Ref AlertTopic]
+
+Outputs:
+  BucketName:
+    Value: !Ref RawBucket
+  FunctionName:
+    Value: !Ref CollectorFunction
+  LogGroupName:
+    Value: !Ref CollectorLogs

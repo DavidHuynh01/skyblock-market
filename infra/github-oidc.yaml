@@ -1,0 +1,186 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: >
+  Keyless CI deploys for skyblock-market. GitHub Actions assumes this role via
+  OpenID Connect, so no AWS keys are stored anywhere. Reuses the account's
+  GitHub OIDC provider (an account can have only one).
+
+Parameters:
+  GitHubOrg:
+    Type: String
+    Default: DavidHuynh01
+  GitHubRepo:
+    Type: String
+    Default: skyblock-market
+  Branch:
+    Type: String
+    Default: main
+  Environment:
+    Type: String
+    Default: production
+  StackName:
+    Type: String
+    Default: skyblock-market
+    Description: The collector stack this role may deploy
+
+Resources:
+  DeployRole:
+    Type: AWS::IAM::Role
+    Properties:
+      # Deliberately outside the "${StackName}-*" pattern its permissions
+      # cover, so the role can't change its own permissions.
+      RoleName: !Sub "github-deploy-${StackName}"
+      MaxSessionDuration: 3600
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Federated: !Sub "arn:aws:iam::${AWS::AccountId}:oidc-provider/token.actions.githubusercontent.com"
+            Action: sts:AssumeRoleWithWebIdentity
+            # Pinned to one repo and one branch by exact `repository` and `ref`.
+            # `sub` is matched loosely because GitHub embeds numeric ids in it
+            # and uses an environment form for jobs with an environment; IAM
+            # still requires a `sub` condition.
+            Condition:
+              StringEquals:
+                token.actions.githubusercontent.com:aud: sts.amazonaws.com
+                token.actions.githubusercontent.com:repository: !Sub "${GitHubOrg}/${GitHubRepo}"
+                token.actions.githubusercontent.com:ref: !Sub "refs/heads/${Branch}"
+              StringLike:
+                token.actions.githubusercontent.com:sub:
+                  - !Sub "repo:${GitHubOrg}/${GitHubRepo}:ref:refs/heads/${Branch}"
+                  - !Sub "repo:${GitHubOrg}@*/${GitHubRepo}@*:ref:refs/heads/${Branch}"
+                  - !Sub "repo:${GitHubOrg}/${GitHubRepo}:environment:${Environment}"
+                  - !Sub "repo:${GitHubOrg}@*/${GitHubRepo}@*:environment:${Environment}"
+      Policies:
+        - PolicyName: deploy
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Sid: ThisStack
+                Effect: Allow
+                Action:
+                  - cloudformation:CreateChangeSet
+                  - cloudformation:DescribeChangeSet
+                  - cloudformation:ExecuteChangeSet
+                  - cloudformation:DeleteChangeSet
+                  - cloudformation:DescribeStacks
+                  - cloudformation:DescribeStackEvents
+                  - cloudformation:DescribeStackResource
+                  - cloudformation:DescribeStackResources
+                  - cloudformation:GetTemplate
+                  - cloudformation:GetTemplateSummary
+                  - cloudformation:ListStackResources
+                Resource:
+                  - !Sub "arn:aws:cloudformation:${AWS::Region}:${AWS::AccountId}:stack/${StackName}/*"
+                  - !Sub "arn:aws:cloudformation:${AWS::Region}:${AWS::AccountId}:stack/aws-sam-cli-managed-default/*"
+              - Sid: SamTransform
+                Effect: Allow
+                Action: cloudformation:CreateChangeSet
+                Resource: !Sub "arn:aws:cloudformation:${AWS::Region}:aws:transform/Serverless-2016-10-31"
+              - Sid: BucketsConfigOnly
+                Effect: Allow
+                Action:
+                  - s3:CreateBucket
+                  - s3:GetBucketLocation
+                  - s3:ListBucket
+                  - s3:GetBucketPolicy
+                  - s3:PutBucketPolicy
+                  - s3:DeleteBucketPolicy
+                  - s3:PutBucketTagging
+                  - s3:GetEncryptionConfiguration
+                  - s3:PutEncryptionConfiguration
+                  - s3:GetBucketPublicAccessBlock
+                  - s3:PutBucketPublicAccessBlock
+                  - s3:GetBucketOwnershipControls
+                  - s3:PutBucketOwnershipControls
+                Resource:
+                  - arn:aws:s3:::aws-sam-cli-managed-default*
+                  - !Sub "arn:aws:s3:::${StackName}-*"
+              # The code upload only. The deploy role can't read or write the
+              # collected sales.
+              - Sid: SamArtifacts
+                Effect: Allow
+                Action: [s3:GetObject, s3:PutObject]
+                Resource: arn:aws:s3:::aws-sam-cli-managed-default*/*
+              - Sid: Function
+                Effect: Allow
+                Action: lambda:*
+                Resource: !Sub "arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:${StackName}-*"
+              - Sid: StackRoles
+                Effect: Allow
+                Action:
+                  - iam:CreateRole
+                  - iam:DeleteRole
+                  - iam:GetRole
+                  - iam:PassRole
+                  - iam:TagRole
+                  - iam:UntagRole
+                  - iam:UpdateAssumeRolePolicy
+                  - iam:AttachRolePolicy
+                  - iam:DetachRolePolicy
+                  - iam:PutRolePolicy
+                  - iam:DeleteRolePolicy
+                  - iam:GetRolePolicy
+                  - iam:ListRolePolicies
+                  - iam:ListAttachedRolePolicies
+                Resource: !Sub "arn:aws:iam::${AWS::AccountId}:role/${StackName}-*"
+              - Sid: Schedule
+                Effect: Allow
+                Action:
+                  - scheduler:CreateSchedule
+                  - scheduler:UpdateSchedule
+                  - scheduler:DeleteSchedule
+                  - scheduler:GetSchedule
+                  - scheduler:TagResource
+                  - scheduler:UntagResource
+                  - scheduler:ListTagsForResource
+                Resource: !Sub "arn:aws:scheduler:${AWS::Region}:${AWS::AccountId}:schedule/default/${StackName}-*"
+              - Sid: Logs
+                Effect: Allow
+                Action:
+                  - logs:CreateLogGroup
+                  - logs:DeleteLogGroup
+                  - logs:PutRetentionPolicy
+                  - logs:DeleteRetentionPolicy
+                  - logs:TagResource
+                  - logs:UntagResource
+                  - logs:TagLogGroup
+                  - logs:ListTagsForResource
+                Resource: !Sub "arn:aws:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/lambda/${StackName}-*"
+              - Sid: AlertTopic
+                Effect: Allow
+                Action:
+                  - sns:CreateTopic
+                  - sns:DeleteTopic
+                  - sns:GetTopicAttributes
+                  - sns:SetTopicAttributes
+                  - sns:Subscribe
+                  - sns:Unsubscribe
+                  - sns:GetSubscriptionAttributes
+                  - sns:ListSubscriptionsByTopic
+                  - sns:TagResource
+                  - sns:UntagResource
+                  - sns:ListTagsForResource
+                Resource: !Sub "arn:aws:sns:${AWS::Region}:${AWS::AccountId}:${StackName}-*"
+              - Sid: Alarms
+                Effect: Allow
+                Action:
+                  - cloudwatch:PutMetricAlarm
+                  - cloudwatch:DeleteAlarms
+                  - cloudwatch:TagResource
+                  - cloudwatch:UntagResource
+                  - cloudwatch:ListTagsForResource
+                Resource: !Sub "arn:aws:cloudwatch:${AWS::Region}:${AWS::AccountId}:alarm:${StackName}-*"
+              # These describe calls don't support resource-level permissions.
+              - Sid: Describe
+                Effect: Allow
+                Action:
+                  - cloudwatch:DescribeAlarms
+                  - logs:DescribeLogGroups
+                Resource: "*"
+
+Outputs:
+  DeployRoleArn:
+    Description: Store as the AWS_DEPLOY_ROLE_ARN secret in GitHub
+    Value: !GetAtt DeployRole.Arn
