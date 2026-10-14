@@ -1,7 +1,10 @@
+import json
+import urllib.error
+
 import pytest
 
-from collector.feed import KEEP, FeedError, parse_batch
-from tests.helpers import CUR, body, sale
+from collector.feed import KEEP, FeedError, fetch_with_retry, parse_batch
+from tests.helpers import CUR, Clock, body, sale
 
 
 def test_only_allowlisted_fields_are_kept():
@@ -60,3 +63,52 @@ def test_each_kind_of_malformed_sale_is_dropped(bad):
 def test_an_empty_list_is_a_valid_batch():
     batch = parse_batch(body([]))
     assert batch.sales == [] and batch.dropped == 0
+
+
+def failing_then(results):
+    """A get_json that raises or returns each item of `results` in turn."""
+    calls = iter(results)
+
+    def get_json():
+        item = next(calls)
+        if isinstance(item, Exception):
+            raise item
+        return item
+    return get_json
+
+
+def test_a_failed_fetch_is_retried_after_two_seconds():
+    clock = Clock(0)
+    got = fetch_with_retry(failing_then([OSError("reset"), {"ok": 1}]), clock, clock.sleep, deadline=38)
+    assert got == {"ok": 1}
+    assert clock.sleeps == [2]
+
+
+def test_it_gives_up_after_three_tries():
+    clock = Clock(0)
+    with pytest.raises(FeedError, match="feed unavailable"):
+        fetch_with_retry(failing_then([OSError("x")] * 3), clock, clock.sleep, deadline=38)
+    assert clock.sleeps == [2, 4]
+
+
+def test_it_never_waits_past_the_deadline():
+    clock = Clock(0)
+    with pytest.raises(FeedError):
+        fetch_with_retry(failing_then([OSError("x")] * 3), clock, clock.sleep, deadline=3)
+    assert clock.sleeps == [2]  # a 4 s wait would end past the deadline, so it stops
+
+
+def test_an_html_error_page_is_retried_then_fails():  # Review Focus 1
+    not_json = json.JSONDecodeError("Expecting value", "<html>502</html>", 0)
+    clock = Clock(0)
+    with pytest.raises(FeedError):
+        fetch_with_retry(failing_then([not_json] * 3), clock, clock.sleep, deadline=38)
+
+
+@pytest.mark.parametrize("status", [429, 503])
+def test_rate_limits_and_maintenance_are_retried_then_fail(status):  # Review Focus 2
+    error = urllib.error.HTTPError("https://api.hypixel.net", status, "busy", {}, None)
+    clock = Clock(0)
+    with pytest.raises(FeedError):
+        fetch_with_retry(failing_then([error] * 3), clock, clock.sleep, deadline=38)
+    assert clock.sleeps == [2, 4]

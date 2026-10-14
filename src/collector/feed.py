@@ -63,3 +63,27 @@ def parse_batch(body):
     if sales and dropped / len(sales) > MAX_BAD_SHARE:
         raise FeedError(f"{dropped} of {len(sales)} sales malformed; the format may have changed")
     return Batch(last_updated, kept, dropped)
+
+
+def http_get_json(url=FEED_URL, timeout=FETCH_TIMEOUT_SECONDS):
+    request = urllib.request.Request(url, headers={"User-Agent": "skyblock-market-collector/1"})
+    with urllib.request.urlopen(request, timeout=timeout) as response:
+        return json.load(response)
+
+
+def fetch_with_retry(get_json, clock, sleep, deadline, backoffs=(2, 4)):
+    """Call get_json(), retrying after each wait in `backoffs`, but never
+    starting a wait that would end past `deadline` (a clock() value).
+
+    Raises FeedError carrying the last error if every attempt fails."""
+    last_error = None
+    for wait in (0, *backoffs):
+        if wait:
+            if clock() + wait >= deadline:
+                break
+            sleep(wait)
+        try:
+            return get_json()
+        except Exception as error:  # network, timeout, HTTP status, bad JSON
+            last_error = error
+    raise FeedError(f"feed unavailable: {last_error!r}")
