@@ -38,8 +38,9 @@ EventBridge Scheduler ─ every minute ─▶ Lambda (Python) ─▶ S3: one gzi
 - **No duplicates, no gaps.** Files are named after Hypixel's own refresh
   time, so a batch fetched twice overwrites itself. A run saves any batch the
   previous run missed before waiting for its own.
-- **Untrustworthy data is rejected.** If more than 10% of a batch is
-  malformed, nothing is saved and the alarm fires.
+- **Untrustworthy data is rejected.** If more than 10% of a batch, and at
+  least 3 sales, are malformed, nothing is saved. Repeated failures, a
+  stopped collector, or a feed that goes quiet each set off an email alarm.
 - **Least privilege.** The function can only add files; it can't read, list
   or delete them. The bucket is private, encrypted and TLS-only, and the data
   survives even if the stack is deleted.
