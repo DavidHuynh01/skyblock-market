@@ -99,3 +99,15 @@ def test_an_untrustworthy_batch_saves_nothing():
         collect_once(get_json=lambda: body([sale(price=-1)] * 5, last_updated=CUR),
                      save=saved.append, clock=clock, sleep=clock.sleep, state={})
     assert saved == []
+
+
+def test_when_hypixel_refreshes_after_every_deadline_each_batch_is_still_saved_once():
+    # Phase drift: the list only becomes visible after the run's deadline, every
+    # minute. Each run finds the batch the previous run couldn't wait for and
+    # saves it. That run must succeed: if it raised, the failing alarm would
+    # stay stuck in ALARM and could no longer report a real failure.
+    clock = Clock(M + 0.5)
+    saved, keys = run(clock, {"last_saved": PREV - 60_000},
+                      get_json=lambda: body([sale()], last_updated=PREV))
+    assert saved == [PREV]
+    assert keys == [f"key-{PREV}"]
