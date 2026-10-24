@@ -57,8 +57,8 @@ Resources:
       Architectures: [arm64]
       MemorySize: 192
       Timeout: 55
-      # Caps this role at the boundary defined in github-oidc.yaml. The deploy
-      # role can only create roles that carry it.
+      # Caps this role at the boundary defined in the aws-account repo. The
+      # deploy role can only create roles that carry it.
       PermissionsBoundary: !Sub "arn:aws:iam::${AWS::AccountId}:policy/${AWS::StackName}-role-boundary"
       Environment:
         Variables:
