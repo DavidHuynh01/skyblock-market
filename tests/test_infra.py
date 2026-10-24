@@ -1,8 +1,9 @@
-"""Security rules for the AWS templates, checked on every change.
+"""Rules for the collector's AWS template, checked on every change.
 
-The deploy role is what GitHub Actions runs as. Whoever controls the pipeline
-controls that role, so it must never be able to grant itself, or any role it
-creates, more than the collector needs.
+The deploy role and the permissions boundary live in the aws-account repo
+(github.com/DavidHuynh01/aws-account), whose policy tests guard them. These
+check the collector's side: its roles carry that boundary, and its limits and
+alarms are right.
 """
 from pathlib import Path
 
@@ -10,16 +11,6 @@ import yaml
 
 INFRA = Path(__file__).resolve().parent.parent / "infra"
 
-# Actions that create a role or widen what a role may do.
-ROLE_WRITES = {
-    "iam:CreateRole",
-    "iam:PutRolePolicy",
-    "iam:AttachRolePolicy",
-    "iam:DetachRolePolicy",
-    "iam:DeleteRolePolicy",
-    "iam:PutRolePermissionsBoundary",
-}
-BOUNDARY_REF = {"Ref": "RoleBoundary"}
 BOUNDARY_ARN = {"Sub": "arn:aws:iam::${AWS::AccountId}:policy/${AWS::StackName}-role-boundary"}
 
 
@@ -40,59 +31,6 @@ CfnLoader.add_multi_constructor("!", _tag)
 
 def load(name):
     return yaml.load((INFRA / name).read_text(encoding="utf-8"), Loader=CfnLoader)
-
-
-def actions(statement):
-    a = statement["Action"]
-    return set(a if isinstance(a, list) else [a])
-
-
-def deploy_statements():
-    role = load("github-oidc.yaml")["Resources"]["DeployRole"]["Properties"]
-    return [s for p in role["Policies"] for s in p["PolicyDocument"]["Statement"]]
-
-
-def test_roles_can_only_be_created_or_widened_inside_the_boundary():
-    found = set()
-    for s in deploy_statements():
-        writes = actions(s) & ROLE_WRITES
-        if s["Effect"] == "Allow" and writes:
-            found |= writes
-            assert s["Condition"]["StringEquals"]["iam:PermissionsBoundary"] == BOUNDARY_REF, s["Sid"]
-    assert found == ROLE_WRITES, "every role-writing action is granted, and only with the boundary"
-
-
-def test_nothing_can_remove_a_boundary_or_grant_everything():
-    for s in deploy_statements():
-        if s["Effect"] == "Allow":
-            assert not actions(s) & {"iam:DeleteRolePermissionsBoundary", "iam:*", "*"}, s["Sid"]
-
-
-def test_stack_roles_can_only_be_passed_to_lambda_and_the_scheduler():
-    passes = [s for s in deploy_statements() if "iam:PassRole" in actions(s)]
-    assert passes
-    for s in passes:
-        assert s["Condition"]["StringEquals"]["iam:PassedToService"] == [
-            "lambda.amazonaws.com",
-            "scheduler.amazonaws.com",
-        ]
-
-
-def test_the_boundary_allows_only_what_the_collector_needs():
-    boundary = load("github-oidc.yaml")["Resources"]["RoleBoundary"]["Properties"]["PolicyDocument"]
-    granted = set()
-    for s in boundary["Statement"]:
-        assert s["Effect"] == "Allow"
-        granted |= actions(s)
-        if "s3:PutObject" in actions(s):
-            assert s["Resource"]["Sub"].endswith("/raw/*"), "sales can only be added, under raw/"
-    assert granted == {
-        "s3:PutObject",
-        "logs:CreateLogGroup",
-        "logs:CreateLogStream",
-        "logs:PutLogEvents",
-        "lambda:InvokeFunction",
-    }
 
 
 def test_the_collectors_roles_are_created_inside_the_boundary():
@@ -136,12 +74,3 @@ def test_a_feed_that_goes_quiet_raises_an_alarm():
     assert a["Dimensions"] == [{"Name": "Service", "Value": "collector"}]
     assert a["Statistic"] == "Sum" and a["Period"] * a["EvaluationPeriods"] == 1800
     assert a["Threshold"] == 100 and a["ComparisonOperator"] == "LessThanThreshold"
-
-
-def test_the_deploy_role_cannot_change_any_buckets_settings():
-    # Uploading the code package is all CI needs from S3. Bucket policy and
-    # public-access changes are rare and go through an admin deploy.
-    for s in deploy_statements():
-        for a in actions(s):
-            if a.startswith("s3:") and s["Effect"] == "Allow":
-                assert a in {"s3:GetObject", "s3:PutObject", "s3:GetBucketLocation", "s3:ListBucket"}, a
