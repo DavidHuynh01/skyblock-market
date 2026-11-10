@@ -5,7 +5,9 @@ from real sales. Companion to
 [SkyblockZordle](https://github.com/DavidHuynh01/SkyblockZordle), where the
 estimates will appear.
 
-**Status: collecting data.** The model comes once there are a few weeks of sales.
+**Status: collecting data, model next.** In its first 27 days (Oct 14 to Nov 9,
+2026) the collector saved about **3.7 million sales**, capturing **99.7%** of
+minutes (38,689 of 38,788).
 
 ## Why not just average the price?
 
@@ -47,8 +49,8 @@ EventBridge Scheduler ─ every minute ─▶ Lambda (Python) ─▶ S3: one gzi
 
 ## Roadmap
 
-1. **Collector**: live
-2. **Model**: learn prices from the collected sales, compared against the plain average
+1. **Collector**: live since Oct 14, 2026
+2. **Model** (next): learn prices from the collected sales, compared against the plain average
 3. **Price service**: serve the model in a Docker container
 4. **SkyblockZordle integration**: market value in Collections and on the win screen
 
@@ -56,7 +58,8 @@ EventBridge Scheduler ─ every minute ─▶ Lambda (Python) ─▶ S3: one gzi
 
 Python 3.13 · AWS Lambda · EventBridge Scheduler · S3 · CloudWatch + SNS ·
 AWS SAM (infrastructure as code) · GitHub Actions with keyless OIDC deploys ·
-pytest
+pytest. The deploy role and its permissions boundary are managed with Terraform
+in [aws-account](https://github.com/DavidHuynh01/aws-account).
 
 ---
 
